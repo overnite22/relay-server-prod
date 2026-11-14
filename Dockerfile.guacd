@@ -28,7 +28,7 @@ COPY --from=build /usr/lib/freerdp3/libguac*.so /usr/lib/freerdp3/
 COPY --from=build /usr/local/sbin/guacd /usr/local/sbin/guacd
 COPY --from=build /licenses/ /licenses/
 ENV LD_LIBRARY_PATH=/usr/local/lib
-LABEL org.opencontainers.image.source="https://github.com/overnite22/relay-public" \
+LABEL org.opencontainers.image.source="https://github.com/overnite22/relay-server-prod" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.title="Relay guacd (Apache Guacamole 1.6.0, Alpine 3.24)"
 USER guacd

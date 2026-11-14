@@ -32,7 +32,7 @@ COPY --from=build /out/relay /relay
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="Relay" \
-      org.opencontainers.image.source="https://github.com/overnite22/relay-public" \
+      org.opencontainers.image.source="https://github.com/overnite22/relay-server-prod" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version=$VERSION
 COPY --from=build /out/relay /relay

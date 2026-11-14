@@ -63,7 +63,7 @@ jobs:
       - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/overnite22/relay-public # package name kept so existing installs keep updating
           tags: |
             type=ref,event=tag
             type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
@@ -98,7 +98,7 @@ jobs:
           file: Dockerfile.guacd
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository }}:guacd-1.6.0
+          tags: ghcr.io/overnite22/relay-public:guacd-1.6.0
           sbom: true
           provenance: mode=max
       - name: Check published image vulnerabilities
