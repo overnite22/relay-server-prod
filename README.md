@@ -1,3 +1,5 @@
+**English** · [Français](README.fr.md)
+
 # Relay
 
 Self-hosted remote connection manager with an RDM-style ribbon, folder tree and session tabs.
