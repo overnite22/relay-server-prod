@@ -179,7 +179,7 @@ func TestTreeCRUD(t *testing.T) {
 
 func TestBuildConfigRDP(t *testing.T) {
 	e := store.Entry{Kind: "rdp", Host: "dc01", Port: 3389, Settings: json.RawMessage(`{"security":"nla","ignoreCert":false}`)}
-	cfg, err := buildConfig(e, secrets{username: "admin", domain: "LAB", password: "pw"}, 1920, 1080, 96, "Europe/Paris")
+	cfg, err := buildConfig(e, secrets{username: "admin", domain: "LAB", password: "pw"}, 1920, 1080, 96, "Europe/Paris", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestBuildConfigRDP(t *testing.T) {
 	if p["security"] != "nla" || p["ignore-cert"] != "" || p["server-layout"] != "fr-fr-azerty" || p["domain"] != "LAB" || p["resize-method"] != "display-update" {
 		t.Fatalf("%v", p)
 	}
-	cfg, _ = buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 1, Settings: json.RawMessage(`{}`)}, secrets{}, 0, 0, 0, "")
+	cfg, _ = buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 1, Settings: json.RawMessage(`{}`)}, secrets{}, 0, 0, 0, "", "")
 	if cfg.Params["ignore-cert"] != "" || cfg.Params["security"] != "any" {
 		t.Fatalf("valeurs par défaut : %v", cfg.Params)
 	}
@@ -392,22 +392,22 @@ func TestImportRDMEndpoints(t *testing.T) {
 }
 
 func TestBuildConfigSSHSFTP(t *testing.T) {
-	cfg, _ := buildConfig(store.Entry{Kind: "ssh", Host: "h", Port: 22, Settings: json.RawMessage(`{}`)}, secrets{}, 0, 0, 0, "")
+	cfg, _ := buildConfig(store.Entry{Kind: "ssh", Host: "h", Port: 22, Settings: json.RawMessage(`{}`)}, secrets{}, 0, 0, 0, "", "")
 	if cfg.Params["enable-sftp"] != "true" || cfg.Params["sftp-root-directory"] != "/" {
 		t.Fatalf("SFTP par défaut : %v", cfg.Params)
 	}
-	cfg, _ = buildConfig(store.Entry{Kind: "ssh", Host: "h", Port: 22, Settings: json.RawMessage(`{"sftp":false}`)}, secrets{}, 0, 0, 0, "")
+	cfg, _ = buildConfig(store.Entry{Kind: "ssh", Host: "h", Port: 22, Settings: json.RawMessage(`{"sftp":false}`)}, secrets{}, 0, 0, 0, "", "")
 	if cfg.Params["enable-sftp"] != "" {
 		t.Fatalf("SFTP non désactivé : %v", cfg.Params)
 	}
 }
 
 func TestBuildConfigRDPDrive(t *testing.T) {
-	cfg, _ := buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 3389, Settings: json.RawMessage(`{}`)}, secrets{user: "Moi@Lab.fr/../x"}, 0, 0, 0, "")
+	cfg, _ := buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 3389, Settings: json.RawMessage(`{}`)}, secrets{user: "Moi@Lab.fr/../x"}, 0, 0, 0, "", "")
 	if cfg.Params["enable-drive"] != "true" || cfg.Params["drive-path"] != "/drive/"+safeDir("moi@lab.fr/../x") || cfg.Params["drive-name"] != "Relay" {
 		t.Fatalf("lecteur : %v", cfg.Params)
 	}
-	cfg, _ = buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 3389, Settings: json.RawMessage(`{"drive":false}`)}, secrets{}, 0, 0, 0, "")
+	cfg, _ = buildConfig(store.Entry{Kind: "rdp", Host: "h", Port: 3389, Settings: json.RawMessage(`{"drive":false}`)}, secrets{}, 0, 0, 0, "", "")
 	if cfg.Params["enable-drive"] != "" {
 		t.Fatalf("lecteur non désactivé : %v", cfg.Params)
 	}

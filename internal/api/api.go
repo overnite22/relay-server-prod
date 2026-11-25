@@ -535,6 +535,7 @@ type sessionOptions struct {
 	Height   int    `json:"height"`
 	DPI      int    `json:"dpi"`
 	Timezone string `json:"timezone"`
+	Locale   string `json:"locale"` // langue du navigateur (fr-FR), pour sendLocale
 	Record   bool   `json:"record"`
 	// Native : console Proxmox relayée par guacd (applications), au lieu de noVNC.
 	Native bool `json:"native"`
@@ -615,7 +616,7 @@ func (s *Server) prepareGuacSession(w http.ResponseWriter, r *http.Request, e st
 		return v
 	}
 	cfg, err := buildConfig(e, sec,
-		clamp(in.Width, 100, 8192, 1280), clamp(in.Height, 100, 8192, 720), clamp(in.DPI, 48, 400, 96), in.Timezone)
+		clamp(in.Width, 100, 8192, 1280), clamp(in.Height, 100, 8192, 720), clamp(in.DPI, 48, 400, 96), in.Timezone, in.Locale)
 	if err != nil {
 		s.fail(w, r, store.ErrInvalid{Msg: "paramètres avancés invalides pour ce type d'entrée"})
 		return

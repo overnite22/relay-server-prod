@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +75,15 @@ type rdpSettings struct {
 	DisableCopy    bool   `json:"disableCopy"`
 	DisablePaste   bool   `json:"disablePaste"`
 	Drive          *bool  `json:"drive"` // lecteur « Relay » pour transférer des fichiers (défaut : oui)
+	// Clés partagées avec Relay Desktop (core/src/conn.rs), mêmes noms et valeurs.
+	Resolution       string `json:"resolution"` // "" ou fit : taille de l'onglet ; fixed : width×height ; fullscreen : comme fit
+	FixedWidth       int    `json:"width"`
+	FixedHeight      int    `json:"height"`
+	AudioMode        string `json:"audioMode"` // "" : sur ce poste ; remote : sur l'ordinateur distant
+	RedirectPrinters bool   `json:"redirectPrinters"`
+	GatewayUsage     string `json:"gatewayUsage"`     // "" : aucune ; always ; auto : sauf adresses locales
+	GatewayHost      string `json:"gatewayHost"`      // hôte[:port] de la passerelle RD
+	GatewaySameCreds *bool  `json:"gatewaySameCreds"` // défaut : oui
 }
 
 type sshSettings struct {
@@ -83,6 +93,9 @@ type sshSettings struct {
 	Scrollback  int    `json:"scrollback"`
 	SFTP        *bool  `json:"sftp"`     // transfert de fichiers (défaut : oui)
 	SFTPRoot    string `json:"sftpRoot"` // dossier racine du navigateur de fichiers (défaut : /)
+	// charset (jeu de caractères distant) reste propre au desktop : le
+	// terminal de guacd est toujours en UTF-8 (aucun paramètre équivalent).
+	SendLocale bool `json:"sendLocale"` // envoie LANG (paramètre locale de guacd)
 }
 
 type vncSettings struct {
@@ -105,7 +118,7 @@ func boolStr(b bool) string {
 }
 
 // buildConfig traduit une entrée en paramètres guacd.
-func buildConfig(e store.Entry, s secrets, width, height, dpi int, tz string) (guac.Config, error) {
+func buildConfig(e store.Entry, s secrets, width, height, dpi int, tz, lang string) (guac.Config, error) {
 	p := map[string]string{
 		"hostname": e.Host,
 		"port":     strconv.Itoa(e.Port),
@@ -125,9 +138,34 @@ func buildConfig(e store.Entry, s secrets, width, height, dpi int, tz string) (g
 			p["ignore-cert"] = "true"
 		}
 		p["server-layout"] = orDefault(st.KeyboardLayout, "fr-fr-azerty")
-		p["resize-method"] = "display-update"
+		ok := func(v int) bool { return v >= 200 && v <= 8192 }
+		if st.Resolution == "fixed" && ok(st.FixedWidth) && ok(st.FixedHeight) {
+			// Taille fixe, mise à l'échelle dans l'onglet par le client.
+			cfg.Width, cfg.Height = st.FixedWidth, st.FixedHeight
+		} else {
+			p["resize-method"] = "display-update"
+		}
 		p["console"] = boolStr(st.Console)
-		p["disable-audio"] = boolStr(st.DisableAudio)
+		// guacd ne sait pas laisser le son sur l'ordinateur distant : dans ce
+		// mode, il n'est simplement pas joué sur ce poste.
+		p["disable-audio"] = boolStr(st.DisableAudio || st.AudioMode == "remote")
+		if st.RedirectPrinters {
+			p["enable-printing"] = "true"
+			p["printer-name"] = "Relay"
+		}
+		if gw := strings.TrimSpace(st.GatewayHost); gw != "" &&
+			(st.GatewayUsage == "always" || st.GatewayUsage == "auto" && !isLocalHost(e.Host)) {
+			if h, port, err := net.SplitHostPort(gw); err == nil {
+				gw = h
+				p["gateway-port"] = port
+			}
+			p["gateway-hostname"] = gw
+			if st.GatewaySameCreds == nil || *st.GatewaySameCreds {
+				p["gateway-username"] = s.username
+				p["gateway-password"] = s.password
+				p["gateway-domain"] = s.domain
+			}
+		}
 		p["enable-wallpaper"] = boolStr(st.Wallpaper)
 		p["enable-font-smoothing"] = "true"
 		p["disable-copy"] = boolStr(st.DisableCopy)
@@ -160,6 +198,9 @@ func buildConfig(e store.Entry, s secrets, width, height, dpi int, tz string) (g
 			p["scrollback"] = strconv.Itoa(st.Scrollback)
 		}
 		p["terminal-type"] = "xterm-256color"
+		if st.SendLocale {
+			p["locale"] = posixLocale(lang)
+		}
 		p["server-alive-interval"] = "30"
 		if st.SFTP == nil || *st.SFTP {
 			p["enable-sftp"] = "true"
@@ -182,6 +223,41 @@ func buildConfig(e store.Entry, s secrets, width, height, dpi int, tz string) (g
 		}
 	}
 	return cfg, nil
+}
+
+// isLocalHost reprend « sauf adresses locales » de la passerelle RD : nom
+// sans point, .local, ou adresse IP privée, de bouclage ou lien-local.
+func isLocalHost(h string) bool {
+	h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+	}
+	return h != "" && (!strings.Contains(h, ".") || strings.HasSuffix(h, ".local"))
+}
+
+// posixLocale convertit la langue du navigateur (fr-FR) en locale UTF-8
+// (fr_FR.UTF-8), le terminal de guacd étant toujours en UTF-8.
+func posixLocale(lang string) string {
+	letters := func(v string, lo, hi int) bool {
+		if len(v) < lo || len(v) > hi {
+			return false
+		}
+		for _, r := range v {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+				return false
+			}
+		}
+		return true
+	}
+	parts := strings.SplitN(strings.TrimSpace(lang), "-", 2)
+	if !letters(parts[0], 2, 3) {
+		return "en_US.UTF-8"
+	}
+	l := strings.ToLower(parts[0])
+	if len(parts) == 2 && letters(parts[1], 2, 2) {
+		return l + "_" + strings.ToUpper(parts[1]) + ".UTF-8"
+	}
+	return l + ".UTF-8"
 }
 
 func orDefault(v, d string) string {
