@@ -53,6 +53,16 @@ const RDP_LAYOUTS: [string, string][] = [
   ["failsafe", "Unicode (secours)"],
 ];
 
+// Mêmes clés que Relay Desktop (core/src/charset.rs).
+const CHARSETS: [string, string][] = [
+  ["", "UTF-8"],
+  ["iso-8859-1", "ISO-8859-1 (Latin-1)"],
+  ["iso-8859-15", "ISO-8859-15 (Latin-9, €)"],
+  ["windows-1252", "Windows-1252"],
+  ["cp437", "CP437 (DOS, cadres)"],
+  ["cp850", "CP850 (DOS Europe de l'Ouest)"],
+];
+
 const SSH_SCHEMES: [string, string][] = [
   ["gray-black", "Gris sur noir"],
   ["green-black", "Vert sur noir"],
@@ -71,7 +81,9 @@ export function EntryDialog(p: Props) {
   const inherited = inheritedCredential(p.tree, e.folderId, e.kind);
   const inheritedName = p.credentials.find((credential) => credential.id === inherited.id)?.name;
   const st = e.settings as Record<string, unknown>;
-  const setS = (key: string, v: unknown) => setE((cur) => ({ ...cur, settings: { ...cur.settings, [key]: v } }));
+  const setS = (key: string, v: unknown) => setSs({ [key]: v });
+  // undefined retire la clé à l'enregistrement (JSON), comme le desktop.
+  const setSs = (o: Record<string, unknown>) => setE((cur) => ({ ...cur, settings: { ...cur.settings, ...o } }));
 
   const folders = [...p.tree.folders]
     .map((f) => ({ id: f.id, path: pathOf(p.tree, f.id) }))
@@ -215,10 +227,95 @@ export function EntryDialog(p: Props) {
                 <input type="checkbox" checked={!!st.console} onChange={(ev) => setS("console", ev.target.checked)} />
                 Session console (administration)
               </label>
-              <label className="check">
-                <input type="checkbox" checked={!st.disableAudio} onChange={(ev) => setS("disableAudio", !ev.target.checked)} />
-                Lire le son de la machine distante
+              <div className="field-row">
+                <label className="field grow">
+                  <span>Résolution</span>
+                  <select
+                    value={(st.resolution as string) ?? ""}
+                    onChange={(ev) =>
+                      setSs(
+                        ev.target.value === "fixed"
+                          ? { resolution: "fixed", width: st.width || 1920, height: st.height || 1080 }
+                          : { resolution: ev.target.value || undefined, width: undefined, height: undefined },
+                      )
+                    }
+                  >
+                    <option value="">Par défaut (adapter à l'onglet)</option>
+                    <option value="fit">Adapter à l'onglet</option>
+                    <option value="fixed">Taille fixe</option>
+                    <option value="fullscreen">Plein écran</option>
+                  </select>
+                </label>
+                {st.resolution === "fixed" &&
+                  (["width", "height"] as const).map((k) => (
+                    <label key={k} className="field" style={{ width: 100 }}>
+                      <span>{k === "width" ? "Largeur" : "Hauteur"}</span>
+                      <input
+                        type="number"
+                        min={200}
+                        max={8192}
+                        value={(st[k] as number) || ""}
+                        placeholder={k === "width" ? "1920" : "1080"}
+                        onChange={(ev) => setS(k, Number(ev.target.value) || 0)}
+                      />
+                    </label>
+                  ))}
+              </div>
+              <label className="field">
+                <span>Son</span>
+                <select
+                  value={st.disableAudio ? "off" : st.audioMode === "remote" ? "remote" : ""}
+                  onChange={(ev) =>
+                    setSs({
+                      disableAudio: ev.target.value === "off" || undefined,
+                      audioMode: ev.target.value === "remote" ? "remote" : undefined,
+                    })
+                  }
+                >
+                  <option value="">Sur ce poste</option>
+                  <option value="remote">Sur l'ordinateur distant (non joué ici dans le navigateur)</option>
+                  <option value="off">Désactivé</option>
+                </select>
               </label>
+              <label className="check">
+                <input type="checkbox" checked={!!st.redirectPrinters} onChange={(ev) => setS("redirectPrinters", ev.target.checked || undefined)} />
+                Imprimantes : imprimante « Relay » dans Windows, document reçu en PDF
+              </label>
+              <div className="field-row">
+                <label className="field grow">
+                  <span>Passerelle RD</span>
+                  <select
+                    value={(st.gatewayUsage as string) ?? ""}
+                    onChange={(ev) =>
+                      setSs(
+                        ev.target.value
+                          ? { gatewayUsage: ev.target.value }
+                          : { gatewayUsage: undefined, gatewayHost: undefined, gatewaySameCreds: undefined },
+                      )
+                    }
+                  >
+                    <option value="">Aucune</option>
+                    <option value="always">Toujours</option>
+                    <option value="auto">Sauf adresses locales</option>
+                  </select>
+                </label>
+                {!!st.gatewayUsage && (
+                  <label className="field grow">
+                    <span>Hôte de la passerelle</span>
+                    <input value={(st.gatewayHost as string) ?? ""} placeholder="rdgw.exemple.fr" onChange={(ev) => setS("gatewayHost", ev.target.value)} />
+                  </label>
+                )}
+              </div>
+              {!!st.gatewayUsage && (
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={st.gatewaySameCreds !== false}
+                    onChange={(ev) => setS("gatewaySameCreds", ev.target.checked ? undefined : false)}
+                  />
+                  Mêmes identifiants pour la passerelle
+                </label>
+              )}
               <label className="check">
                 <input type="checkbox" checked={!!st.wallpaper} onChange={(ev) => setS("wallpaper", ev.target.checked)} />
                 Afficher le fond d'écran
@@ -277,6 +374,21 @@ export function EntryDialog(p: Props) {
                   placeholder="1000"
                   onChange={(ev) => setS("scrollback", Number(ev.target.value) || 0)}
                 />
+              </label>
+              <label className="field">
+                <span>Jeu de caractères distant</span>
+                <select value={(st.charset as string) ?? ""} onChange={(ev) => setS("charset", ev.target.value || undefined)}>
+                  {CHARSETS.map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+                {!!st.charset && <small>Appliqué par Relay Desktop ; le terminal web reste en UTF-8.</small>}
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={!!st.sendLocale} onChange={(ev) => setS("sendLocale", ev.target.checked || undefined)} />
+                Envoyer LANG (langue du navigateur)
               </label>
               <label className="check">
                 <input type="checkbox" checked={st.sftp !== false} onChange={(ev) => setS("sftp", ev.target.checked)} />

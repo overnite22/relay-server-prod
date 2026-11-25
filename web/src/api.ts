@@ -46,7 +46,7 @@ export const api = {
   saveEntry: (e: EntryInput, id?: string) =>
     id ? req<Entry>("PUT", `/api/entries/${id}`, e) : req<Entry>("POST", "/api/entries", e),
   deleteEntry: (id: string) => req<void>("DELETE", `/api/entries/${id}`),
-  connect: (id: string, size: { width: number; height: number; dpi: number; timezone: string; record?: boolean }) =>
+  connect: (id: string, size: { width: number; height: number; dpi: number; timezone: string; locale?: string; record?: boolean }) =>
     req<{ token: string; protocol: string; password?: string }>("POST", `/api/entries/${id}/connect`, size),
 
   connectionStatus: (signal: AbortSignal) => req<Record<string, ConnectionTest>>("GET", "/api/connection-status", undefined, signal),

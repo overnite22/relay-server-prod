@@ -129,6 +129,7 @@ export function SessionView({ tab, active, onToast, onReconnect }: { tab: Sessio
           dpi: 96,
           record: tab.record,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          locale: navigator.language,
         });
     prepared
       .then(({ token }) => {
