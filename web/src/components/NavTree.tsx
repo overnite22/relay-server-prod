@@ -17,10 +17,13 @@ interface Props {
   onToggle: (folderId: string) => void;
   onOpen: (e: Entry) => void;
   onContextMenu: (s: Selection, x: number, y: number) => void;
-  onMove: (item: { type: "entry" | "folder"; id: string }, folderId: string | null) => void;
+  onMove: (items: Drag[], folderId: string | null) => void;
+  // Sélection multiple d'entrées (Ctrl/Maj + clic) ; vide = sélection simple.
+  multi: string[];
+  onMulti: (ids: string[]) => void;
 }
 
-type Drag = { type: "entry" | "folder"; id: string };
+export type Drag = { type: "entry" | "folder"; id: string };
 
 export function NavTree(p: Props) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -40,12 +43,32 @@ export function NavTree(p: Props) {
   }, [p.tree]);
 
   const isSel = (s: Selection) =>
-    s.type === p.selection.type && (s.type === "root" || (p.selection.type !== "root" && s.id === p.selection.id));
+    (s.type === "entry" && p.multi.includes(s.id)) ||
+    (s.type === p.selection.type && (s.type === "root" || (p.selection.type !== "root" && s.id === p.selection.id)));
+
+  // Ordre d'affichage des entrées, pour la sélection par plage (Maj + clic).
+  const order: string[] = [];
+  const clickEntry = (ev: React.MouseEvent, id: string) => {
+    const anchor = p.selection.type === "entry" ? p.selection.id : null;
+    if (ev.ctrlKey || ev.metaKey) {
+      const cur = p.multi.length ? p.multi : anchor ? [anchor] : [];
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      p.onSelect({ type: "entry", id: next.includes(id) ? id : (next[0] ?? id) });
+      p.onMulti(next.length > 1 ? next : []);
+    } else if (ev.shiftKey && anchor && order.includes(anchor)) {
+      const [a, b] = [order.indexOf(anchor), order.indexOf(id)].sort((x, y) => x - y);
+      p.onSelect({ type: "entry", id: anchor });
+      p.onMulti(order.slice(a, b + 1));
+    } else {
+      p.onSelect({ type: "entry", id });
+    }
+  };
 
   const dragProps = (item: Drag) => ({
     draggable: true,
     onDragStart: (ev: React.DragEvent) => {
-      ev.dataTransfer.setData("application/x-relay", JSON.stringify(item));
+      const group = item.type === "entry" && p.multi.includes(item.id) ? p.multi.map((id) => ({ type: "entry", id })) : [item];
+      ev.dataTransfer.setData("application/x-relay", JSON.stringify(group));
       ev.dataTransfer.effectAllowed = "move";
     },
   });
@@ -61,9 +84,10 @@ export function NavTree(p: Props) {
       ev.preventDefault();
       setDropTarget(null);
       try {
-        const item = JSON.parse(ev.dataTransfer.getData("application/x-relay")) as Drag;
-        if (item.type === "folder" && item.id === folderId) return;
-        p.onMove(item, folderId);
+        const items = (JSON.parse(ev.dataTransfer.getData("application/x-relay")) as Drag[]).filter(
+          (i) => !(i.type === "folder" && i.id === folderId),
+        );
+        if (items.length) p.onMove(items, folderId);
       } catch {
         /* glisser externe */
       }
@@ -72,16 +96,17 @@ export function NavTree(p: Props) {
 
   const entryRow = (e: Entry, depth: number, showPath = false) => {
     const sel: Selection = { type: "entry", id: e.id };
+    order.push(e.id);
     return (
       <div
         key={e.id}
         className={`tree-row ${isSel(sel) ? "selected" : ""}`}
         style={{ paddingLeft: 8 + depth * 16 + 16 }}
-        onClick={() => p.onSelect(sel)}
+        onClick={(ev) => clickEntry(ev, e.id)}
         onDoubleClick={() => p.onOpen(e)}
         onContextMenu={(ev) => {
           ev.preventDefault();
-          p.onSelect(sel);
+          if (!p.multi.includes(e.id)) p.onSelect(sel);
           p.onContextMenu(sel, ev.clientX, ev.clientY);
         }}
         title={endpoint(e)}
@@ -184,5 +209,9 @@ export function NavTree(p: Props) {
       </>
     );
   }
-  return <div className="tree">{body}</div>;
+  return (
+    <div className="tree" tabIndex={-1}>
+      {body}
+    </div>
+  );
 }

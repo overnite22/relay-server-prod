@@ -31,7 +31,7 @@ import {
  Users,
  LogOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, entryInput, localAuthApi } from "./api";
 import { AvailabilityView } from "./components/AvailabilityView";
 import {UsersDialog,PasswordDialog} from "./components/UsersDialog";
@@ -53,7 +53,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { PveSessionView } from "./components/PveSessionView";
 import { SourcesDialog } from "./components/SourcesDialog";
 import { Confirm, Modal, Prompt } from "./components/Modal";
-import { NavTree } from "./components/NavTree";
+import { NavTree, type Drag } from "./components/NavTree";
 import { Ribbon, type RibbonTab } from "./components/Ribbon";
 import { RecordingsDialog } from "./components/RecordingsDialog";
 import { QuickConnectDialog } from "./components/QuickConnectDialog";
@@ -106,6 +106,8 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<Record<string, ConnectionTest>>({});
   const [fatal, setFatal] = useState("");
   const [selection, setSelection] = useState<Selection>({ type: "root" });
+  const [multi, setMulti] = useState<string[]>([]); // sélection multiple d'entrées
+  const searchRef = useRef<HTMLInputElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => loadSet("relay.expanded"));
   const [recent, setRecent] = useState<string[]>(() => [...loadSet("relay.recent")]);
   const [search, setSearch] = useState("");
@@ -182,8 +184,12 @@ export default function App() {
   const selectedFolderId =
     selection.type === "folder" ? selection.id : selection.type === "entry" ? (selectedEntry?.folderId ?? null) : null;
 
+  // Entrées visées par les actions groupées (sélection multiple ou simple).
+  const picked = multi.length > 1 ? tree.entries.filter((e) => multi.includes(e.id)) : selectedEntry ? [selectedEntry] : [];
+
   const select = (s: Selection) => {
     setSelection(s);
+    setMulti([]);
     setActiveTab("dashboard");
   };
 
@@ -337,7 +343,33 @@ export default function App() {
   };
 
   const askDelete = (s: Selection) => {
-    if (s.type === "entry") {
+    if (s.type === "entry" && picked.length > 1 && picked.some((e) => e.id === s.id)) {
+      const group = picked;
+      setDialog({
+        type: "confirm",
+        title: "Supprimer les entrées",
+        message: (
+          <>
+            Supprimer les <b>{group.length} entrées</b> sélectionnées ? Cette action est définitive.
+          </>
+        ),
+        label: "Supprimer",
+        action: async () => {
+          let done = 0;
+          try {
+            for (const e of group) {
+              await api.deleteEntry(e.id);
+              done++;
+            }
+          } catch (err) {
+            toast((err as Error).message);
+          }
+          await reload();
+          select({ type: "root" });
+          if (done) toast(`${done} entrée(s) supprimée(s)`);
+        },
+      });
+    } else if (s.type === "entry") {
       const e = tree.entries.find((x) => x.id === s.id);
       if (!e) return;
       setDialog({
@@ -387,16 +419,18 @@ export default function App() {
     }
   };
 
-  const move = async (item: { type: "entry" | "folder"; id: string }, folderId: string | null) => {
+  const move = async (items: Drag[], folderId: string | null) => {
     try {
-      if (item.type === "entry") {
-        const e = tree.entries.find((x) => x.id === item.id);
-        if (!e || (e.folderId ?? null) === folderId) return;
-        await api.saveEntry({ ...entryInput(e), folderId }, e.id);
-      } else {
-        const f = tree.folders.find((x) => x.id === item.id);
-        if (!f || (f.parentId ?? null) === folderId) return;
-        await api.saveFolder({ name: f.name, parentId: folderId }, f.id);
+      for (const item of items) {
+        if (item.type === "entry") {
+          const e = tree.entries.find((x) => x.id === item.id);
+          if (!e || (e.folderId ?? null) === folderId) continue;
+          await api.saveEntry({ ...entryInput(e), folderId }, e.id);
+        } else {
+          const f = tree.folders.find((x) => x.id === item.id);
+          if (!f || (f.parentId ?? null) === folderId) continue;
+          await api.saveFolder({ name: f.name, parentId: folderId }, f.id);
+        }
       }
       await reload();
       if (folderId) reveal(folderId);
@@ -421,12 +455,12 @@ export default function App() {
             actions: [
               {
                 id: "open",
-                label: selectedEntry?.kind === "web" ? "Ouvrir le site" : "Ouvrir la session",
+                label: picked.length > 1 ? `Ouvrir (${picked.length})` : selectedEntry?.kind === "web" ? "Ouvrir le site" : "Ouvrir la session",
                 Icon: selectedEntry?.kind === "web" ? ExternalLink : Play,
                 color: "#3fb950",
                 large: true,
-                disabled: !selectedEntry,
-                onClick: () => selectedEntry && open(selectedEntry),
+                disabled: !picked.length,
+                onClick: () => picked.forEach((e) => open(e)),
               },
               {
                 id: "record", label: "Ouvrir et enregistrer", Icon: CircleDot, color: "#f85149",
@@ -566,7 +600,7 @@ export default function App() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selection, selectedEntry, selectedFolderId, theme, tree, me],
+    [selection, selectedEntry, selectedFolderId, theme, tree, me, multi],
   );
 
   if (fatal) {
@@ -581,10 +615,62 @@ export default function App() {
     );
   }
 
+  // Raccourcis clavier (arborescence et onglets), jamais pris à une session
+  // ouverte : le terminal / le bureau distant garde Ctrl+W, Ctrl+F, F5…
+  // (Ctrl+W et Ctrl+Tab peuvent être réservés par le navigateur.)
+  const keyRef = useRef<(ev: KeyboardEvent) => void>(() => {});
+  keyRef.current = (ev) => {
+    const t = ev.target as HTMLElement;
+    const inBody = t === document.body || !!t.closest(".nav");
+    const inDashboard = !!t.closest(".doc-body") && activeTab === "dashboard";
+    if (dialog || menu || (!inBody && !inDashboard && !t.closest(".doc-tabs"))) return;
+    const ctrl = ev.ctrlKey || ev.metaKey;
+    const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const plain = !ctrl && !ev.altKey && !t.matches("input, textarea, select, button, a, [contenteditable]");
+    let done = true;
+    if (ctrl && !ev.altKey && key === "f") {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    } else if (key === "F5" && !ctrl) {
+      reload().then(
+        () => toast("Arborescence actualisée"),
+        (err: Error) => toast(err.message),
+      );
+    } else if (ctrl && key === "w" && activeTab !== "dashboard") {
+      closeTab(activeTab);
+    } else if (ctrl && key === "Tab") {
+      const keys = ["dashboard", ...tabs.map((x) => x.key)];
+      const i = keys.indexOf(activeTab);
+      setActiveTab(keys[(i + (ev.shiftKey ? -1 : 1) + keys.length) % keys.length]);
+    } else if (plain && inBody && key === "Enter" && picked.length) {
+      picked.forEach((e) => open(e));
+    } else if (plain && inBody && key === "Enter" && selection.type === "folder") {
+      toggle(selection.id);
+    } else if (plain && inBody && key === "Delete" && selection.type !== "root") {
+      askDelete(selection);
+    } else if (plain && inBody && key === "F2" && selection.type !== "root") {
+      if (selectedEntry) edit(selectedEntry);
+      else if (selection.type === "folder") renameFolder(selection.id);
+    } else done = false;
+    if (done) ev.preventDefault();
+  };
+  useEffect(() => {
+    const h = (ev: KeyboardEvent) => keyRef.current(ev);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
   const menuItems = (s: Selection) => {
     const e = s.type === "entry" ? tree.entries.find((x) => x.id === s.id) : undefined;
     const folderId = s.type === "folder" ? s.id : s.type === "entry" ? (e?.folderId ?? null) : null;
     const items: ({ label: string; Icon: typeof Play; run: () => void; danger?: boolean } | "sep")[] = [];
+    if (e && picked.length > 1 && picked.includes(e)) {
+      const group = picked;
+      items.push({ label: `Ouvrir les ${group.length} entrées`, Icon: Play, run: () => group.forEach((x) => open(x)) });
+      items.push("sep");
+      items.push({ label: `Supprimer les ${group.length} entrées`, Icon: Trash2, run: () => askDelete(s), danger: true });
+      return items;
+    }
     if (e) {
       items.push({ label: e.kind === "web" ? "Ouvrir le site" : "Ouvrir la session", Icon: e.kind === "web" ? ExternalLink : Play, run: () => open(e) });
       if (canTestConnection(e)) items.push({ label: "Tester la connexion", Icon: Activity, run: () => setDialog({ type: "connection-test", entry: e }) });
@@ -645,7 +731,7 @@ export default function App() {
           </div>
           <div className="nav-search">
             <Search size={14} />
-            <input placeholder="Rechercher (nom, hôte, notes)…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input ref={searchRef} placeholder="Rechercher (nom, hôte, notes)… (Ctrl+F)" value={search} onChange={(e) => setSearch(e.target.value)} />
             {search && (
               <button className="icon-btn" onClick={() => setSearch("")} title="Effacer">
                 <X size={13} />
@@ -672,6 +758,8 @@ export default function App() {
             onOpen={open}
             onContextMenu={(sel, x, y) => setMenu({ sel, x, y })}
             onMove={move}
+            multi={multi}
+            onMulti={setMulti}
           />
           <div className="nav-tabs">
             {(
